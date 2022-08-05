@@ -1,5 +1,7 @@
 # GMPT: A Computational Method to Dissect Colonization Resistance of the Gut Microbiota against Pathogens
 
+All the `MATLAB` scripts are running on version 2020b, and `R` scripts are running on version 4.0.2. The dependency of `R` packages is listed at the beginning of scripts. 
+
 ## Generate the simulated data in folder 'generate simulated data'
 1. The scripts can generate the simulated data as shown in Fig.2 and Supplementary Fig.1.
 2. The main script for GLV dynamics to generate the simulated data is `Generate_sim_data_for_GMPT.m`. Please see the comments for the meanings of parameters in the script.
