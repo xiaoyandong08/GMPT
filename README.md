@@ -7,7 +7,7 @@
 
 ## GMPT performance as shown in Fig.2 and Supplementary Fig.1
 
-1. Download the example data from Dropbox: https://www.dropbox.com/sh/i0vvkm3kwd2emzw/AACYyU4b4cTnPF6f-rSEuy4ea?dl=0
+1. Unzip the compressed file of example data in `Non_diagStable_connectivity.zip`.
 2. The ecological netowrks shown in Fig.2 stored at `network of Fig.2a,b,c.pdf`. 
 3. Here we provide the example of synthetic community with N = 30 to perform GMPT and visualize the results in `Fig_2bc_Plot_cohousing_process.m` for Fig.2bc and `Fig2_d2j_GMPT_performance_by_ALDEx2.m` for Fig.2d-j if we used DAA method of ALDEx2.
 4. If using DAA method of ANCOM to perform GMPT, please run the script of `FigS1_GMPT_performance_by_ANCOM.m` to get the GMPT results as shown in Supplementary Fig.1.
