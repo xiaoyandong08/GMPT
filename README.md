@@ -1,6 +1,11 @@
-# GMPT
+# GMPT: A Computational Method to Dissect Colonization Resistance of the Gut Microbiota against Pathogens
 
-A Computational Method to Dissect Colonization Resistance of the Gut Microbiota against Pathogens
+## Generate the simulated data in folder 'generate simulated data'
+1. The scripts can generate the simulated data as shown in Fig.2 and Supplementary Fig.1.
+2. The main script for GLV dynamics to generate the simulated data is `Generate_sim_data_for_GMPT.m`.
+3. Run `GMPT_ALDEx2_for_all.R` and `GMPT_ANCOM_for_all.R` to get DAA results by ALDEx2 and ANCOM, respectively.
+
+## GMPT performance as shown in Fig.2 and Supplementary Fig.1
 
 1. Download the example data from Dropbox: https://www.dropbox.com/sh/cvf46f512byzh1c/AADh_XNUpQsom8xpMjSooaWXa?dl=0
 2. The main script of GMPT for GLV simulation is "GMPT_pipeline.m". Please see the comments for the meanings of parameters in the script.
