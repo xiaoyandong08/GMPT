@@ -1,0 +1,356 @@
+---
+title: "GMPT_tutorial"
+author: "Shanlin Ke"
+date: "12/4/2022"
+email: "spske@channing.harvard.edu"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document for GMPT pipeline. 
+
+For this demo, we used a demo dataset with six phenotypic group and it may take up to one hour to run the whole tutorial. User can adjust the prameters related the number of phenotypic group in our tutorial to run GMPT.
+
+Here, we used ANCOM method as a differential abundance method in our GMPT pipeline. In general, any microbiome related differential abundance methods can be apply here, for example, ALDEx2, DESeq2, MaAsLin2, edgeR, etc.  
+
+```{r GMPT}
+
+rm(list=ls())
+library(vegan)
+library(ggplot2)
+library(plyr)
+library(cowplot)
+library(extrafont)
+library(reshape2)
+library(ggpubr)
+library(ade4)
+library(gclus)
+library(ape)
+library(readxl)
+
+### Loading data
+setwd("XXX/GMPT/Demo")
+ASV <- "XXX/GMPT/Demo/GMPT_demo.xlsx"
+dat0 <- read_excel(path = ASV,sheet = "Demo")
+dat1<-dat0[,-c(3)]
+list_df <- split(dat1, dat1$Index)
+temp <- NULL
+
+### generate non-redundat pair combination based on how many group do you have
+for (i in 1:6) {
+  for (j in 1:6){
+    if(j>i){
+      dd<-rbind(list_df[[i]],list_df[[j]])
+      temp<-c(temp, list(dd))
+    }
+  }
+}
+
+###Load ancom function
+ancom.W = function(otu_data,var_data,
+                   adjusted,repeated,
+                   main.var,adj.formula,
+                   repeat.var,long,rand.formula,
+                   multcorr,sig){
+  
+  n_otu=dim(otu_data)[2]-1
+  
+  otu_ids=colnames(otu_data)[-1]
+  
+  if(repeated==F){
+    data_comp=data.frame(merge(otu_data,var_data,by="Sample.ID",all.y=T),row.names=NULL)
+    #data_comp=data.frame(merge(otu_data,var_data[,c("Sample.ID",main.var)],by="Sample.ID",all.y=T),row.names=NULL)
+  }else if(repeated==T){
+    data_comp=data.frame(merge(otu_data,var_data,by="Sample.ID"),row.names=NULL)
+    # data_comp=data.frame(merge(otu_data,var_data[,c("Sample.ID",main.var,repeat.var)],by="Sample.ID"),row.names=NULL)
+  }
+  
+  base.formula = paste0("lr ~ ",main.var)
+  if(repeated==T){
+    repeat.formula = paste0(base.formula," | ", repeat.var)
+  }
+  if(adjusted==T){
+    adjusted.formula = paste0(base.formula," + ", adj.formula)
+  }
+  
+  if( adjusted == F & repeated == F ){
+    fformula  <- formula(base.formula)
+  } else if( adjusted == F & repeated == T & long == T ){
+    fformula  <- formula(base.formula)   
+  }else if( adjusted == F & repeated == T & long == F ){
+    fformula  <- formula(repeat.formula)   
+  }else if( adjusted == T & repeated == F  ){
+    fformula  <- formula(adjusted.formula)   
+  }else if( adjusted == T & repeated == T  ){
+    fformula  <- formula(adjusted.formula)   
+  }else{
+    stop("Problem with data. Dataset should contain OTU abundances, groups, 
+         and optionally an ID for repeated measures.")
+  }
+  
+  
+  
+  if( repeated==FALSE & adjusted == FALSE){
+    if( length(unique(data_comp[,which(colnames(data_comp)==main.var)]))==2 ){
+      tfun <- exactRankTests::wilcox.exact
+    } else{
+      tfun <- stats::kruskal.test
+    }
+  }else if( repeated==FALSE & adjusted == TRUE){
+    tfun <- stats::aov
+  }else if( repeated== TRUE & adjusted == FALSE & long == FALSE){
+    tfun <- stats::friedman.test
+  }else if( repeated== TRUE & adjusted == FALSE & long == TRUE){
+    tfun <- nlme::lme
+  }else if( repeated== TRUE & adjusted == TRUE){
+    tfun <- nlme::lme
+  }
+  
+  logratio.mat <- matrix(NA, nrow=n_otu, ncol=n_otu)
+  for(ii in 1:(n_otu-1)){
+    for(jj in (ii+1):n_otu){
+      data.pair <- data_comp[,which(colnames(data_comp)%in%otu_ids[c(ii,jj)])]
+      lr <- log((1+as.numeric(data.pair[,1]))/(1+as.numeric(data.pair[,2])))
+      
+      lr_dat <- data.frame( lr=lr, data_comp,row.names=NULL )
+      
+      if(adjusted==FALSE&repeated==FALSE){  ## Wilcox, Kruskal Wallis
+        logratio.mat[ii,jj] <- tfun( formula=fformula, data = lr_dat)$p.value
+      }else if(adjusted==FALSE&repeated==TRUE&long==FALSE){ ## Friedman's 
+        logratio.mat[ii,jj] <- tfun( formula=fformula, data = lr_dat)$p.value
+      }else if(adjusted==TRUE&repeated==FALSE){ ## ANOVA
+        model=tfun(formula=fformula, data = lr_dat,na.action=na.omit)   
+        picker=which(gsub(" ","",row.names(summary(model)[[1]]))==main.var)  
+        logratio.mat[ii,jj] <- summary(model)[[1]][["Pr(>F)"]][picker]
+      }else if(repeated==TRUE&long==TRUE){ ## GEE
+        model=tfun(fixed=fformula,data = lr_dat,
+                   random = formula(rand.formula),
+                   correlation=corAR1(),
+                   na.action=na.omit)   
+        picker=which(gsub(" ","",row.names(anova(model)))==main.var)
+        logratio.mat[ii,jj] <- anova(model)[["p-value"]][picker]
+      }
+      
+    }
+  } 
+  
+  ind <- lower.tri(logratio.mat)
+  logratio.mat[ind] <- t(logratio.mat)[ind]
+  
+  
+  logratio.mat[which(is.finite(logratio.mat)==FALSE)] <- 1
+  
+  mc.pval <- t(apply(logratio.mat,1,function(x){
+    s <- p.adjust(x, method = "BH")
+    return(s)
+  }))
+  
+  a <- logratio.mat[upper.tri(logratio.mat,diag=FALSE)==TRUE]
+  
+  b <- matrix(0,ncol=n_otu,nrow=n_otu)
+  b[upper.tri(b)==T] <- p.adjust(a, method = "BH")
+  diag(b)  <- NA
+  ind.1    <- lower.tri(b)
+  b[ind.1] <- t(b)[ind.1]
+  
+  #########################################
+  ### Code to extract surrogate p-value
+  surr.pval <- apply(mc.pval,1,function(x){
+    s0=quantile(x[which(as.numeric(as.character(x))<sig)],0.95)
+    # s0=max(x[which(as.numeric(as.character(x))<alpha)])
+    return(s0)
+  })
+  #########################################
+  ### Conservative
+  if(multcorr==1){
+    W <- apply(b,1,function(x){
+      subp <- length(which(x<sig))
+    })
+    ### Moderate
+  } else if(multcorr==2){
+    W <- apply(mc.pval,1,function(x){
+      subp <- length(which(x<sig))
+    })
+    ### No correction
+  } else if(multcorr==3){
+    W <- apply(logratio.mat,1,function(x){
+      subp <- length(which(x<sig))
+    })
+  }
+  
+  return(W)
+  }
+
+
+
+ANCOM.main = function(OTUdat,Vardat,
+                      adjusted,repeated,
+                      main.var,adj.formula,
+                      repeat.var,longitudinal,
+                      random.formula,
+                      multcorr,sig,
+                      prev.cut){
+  
+  p.zeroes=apply(OTUdat[,-1],2,function(x){
+    s=length(which(x==0))/length(x)
+  })
+  
+  zeroes.dist=data.frame(colnames(OTUdat)[-1],p.zeroes,row.names=NULL)
+  colnames(zeroes.dist)=c("Taxon","Proportion_zero")
+  
+  zero.plot = ggplot(zeroes.dist, aes(x=Proportion_zero)) + 
+    geom_histogram(binwidth=0.1,colour="black",fill="white") + 
+    xlab("Proportion of zeroes") + ylab("Number of taxa") +
+    theme_bw()
+  
+  #print(zero.plot)
+  
+  OTUdat.thinned=OTUdat
+  OTUdat.thinned=OTUdat.thinned[,c(1,1+which(p.zeroes<prev.cut))]
+  
+  otu.names=colnames(OTUdat.thinned)[-1]
+  
+  W.detected   <- ancom.W(OTUdat.thinned,Vardat,
+                          adjusted,repeated,
+                          main.var,adj.formula,
+                          repeat.var,longitudinal,random.formula,
+                          multcorr,sig)
+  
+  W_stat       <- W.detected
+  
+  
+  ### Bubble plot
+  
+  W_frame = data.frame(otu.names,W_stat,row.names=NULL)
+  W_frame = W_frame[order(-W_frame$W_stat),]
+  
+  W_frame$detected_0.9=rep(FALSE,dim(W_frame)[1])
+  W_frame$detected_0.8=rep(FALSE,dim(W_frame)[1])
+  W_frame$detected_0.7=rep(FALSE,dim(W_frame)[1])
+  W_frame$detected_0.6=rep(FALSE,dim(W_frame)[1])
+  
+  W_frame$detected_0.9[which(W_frame$W_stat>0.9*(dim(OTUdat.thinned[,-1])[2]-1))]=TRUE
+  W_frame$detected_0.8[which(W_frame$W_stat>0.8*(dim(OTUdat.thinned[,-1])[2]-1))]=TRUE
+  W_frame$detected_0.7[which(W_frame$W_stat>0.7*(dim(OTUdat.thinned[,-1])[2]-1))]=TRUE
+  W_frame$detected_0.6[which(W_frame$W_stat>0.6*(dim(OTUdat.thinned[,-1])[2]-1))]=TRUE
+  
+  final_results=list(W_frame,zero.plot)
+  names(final_results)=c("W.taxa","PLot.zeroes")
+  return(final_results)
+}
+
+########## Feed data to ANCOM
+
+for (i in 1:length(temp)){
+  di<-temp[[i]]
+  test=di[,c(1,3:ncol(di))]
+  map=di[,c(1:2)]
+  comparison_test=ANCOM.main(OTUdat=test,
+                             Vardat=map,
+                             adjusted=F,## User can add confounding factors
+                             repeated=F,
+                             main.var="Index",
+                             adj.formula=NULL,
+                             repeat.var=NULL,
+                             multcorr=2,
+                             longitudinal=F,
+                             sig=0.05,
+                             prev.cut=0.90)
+  output<-comparison_test$W.taxa
+  setwd("XXX/GMPT/Demo/Res") ###generate a folder for Res
+  write.table(output, paste(i, ".txt", sep=""), sep="\t",col.names=NA)
+}
+
+###Loading data from ancom res folder
+rm(list=ls())
+setwd("XXX/GMPT/Demo/Res")
+path<- "XXX/GMPT/Demo/Res"
+filenames<-dir(path)
+filepath<-sapply(filenames, function(x){
+  paste(path,x,sep='/')})
+data<-lapply(filepath,function(x){
+  read.delim(x,header=FALSE)})
+ANCOM_res<-matrix(NA,nrow = 1,ncol = 7);
+
+for (i in 1:15){
+  df<-data[[i]]
+  df <- df[order(df[,7],decreasing=T),]
+  ANCOM_res<-rbind(ANCOM_res,df)
+}
+
+ANCOM_res<-ANCOM_res[,-c(1)]
+ANCOM_res<-ANCOM_res[-c(1),]
+
+names(ANCOM_res)<-c("Taxa","W_stat","detected_0.9","detected_0.8","detected_0.7","detected_0.6")
+ANCOM_res <- ANCOM_res[order(ANCOM_res$detected_0.6,decreasing=T),]
+ANCOM_res<-ANCOM_res[(which(ANCOM_res$detected_0.6=="TRUE")),] ### Select detected_0.6
+
+###GMPT res
+GMPT_res<-ANCOM_res[,c(1,2)]
+GMPT_res <- GMPT_res[order(GMPT_res$Taxa,decreasing=F),]
+GMPT_sum<-aggregate(W_stat~Taxa, GMPT_res, FUN = function(x) mean(as.numeric(as.character(x)))) 
+
+###Mean of W state value
+Taxas<-count(GMPT_res, 'Taxa') # Number of Taxa
+GMPT_sum<-cbind(GMPT_sum,Taxas)
+GMPT_sum<-GMPT_sum[,-3]
+GMPT_sum <- GMPT_sum[order(GMPT_sum$freq,decreasing=T),]
+
+######### Caculate the spearman betwee Taxa and pathogen on phenotypic group
+library(microbiome)
+library(psych)
+setwd("/Users/shanlin/HMS_shanlin/Project/CDF/MPT/Final/GMPT/Demo")
+ASV <- "/Users/shanlin/HMS_shanlin/Project/CDF/MPT/Final/GMPT/Demo/GMPT_demo.xlsx"
+dat0 <- read_excel(path = ASV,sheet = "Demo")
+rel<-as.data.frame(make_relative(as.matrix(dat0[,-c(1:3)])))###relative abundance
+rel<-cbind(dat0[,c(2:3)],rel)
+
+### caculate the average abundance in different groups
+dat1<-aggregate(.~Index,data=rel, FUN = function(x) mean(as.numeric(as.character(x))))
+tmp<-NULL
+for (i in 3:length(dat1)){
+  cor.spe<-corr.test(dat1[,2],dat1[,i],method='spearman',adjust="BH")
+  cor<-as.numeric(cor.spe$r)
+  tmp<-rbind(cor,tmp)
+}
+name<-colnames(dat1[,-c(1:2)])
+Sep<-as.data.frame(cbind(name,tmp))
+names(Sep)<-c("Taxa","Sepearman")
+
+###select candidate taxa 
+overlap = intersect(GMPT_sum$Taxa, Sep$Taxa)
+Sep = Sep[match(overlap,Sep$Taxa),]
+Sep <- Sep[order(Sep$Taxa,decreasing=F),]
+GMPT_sum <- GMPT_sum[order(GMPT_sum$Taxa,decreasing=F),]
+GMPT<-cbind(GMPT_sum,Sep)
+
+###Rank based on W score and freq in all pair-wise comparison
+GMPT <- GMPT[order(GMPT$W_stat,decreasing=T),]
+GMPT <- GMPT[order(GMPT$freq,decreasing=T),]
+GMPT <- GMPT[,-4]
+
+GMPT$Sepearman <- as.numeric(GMPT$Sepearman)
+GMPT$Label <- NA #generate null column for labeling
+
+###labeling of putative casual species
+for (i in 1:nrow(GMPT)){
+  if (GMPT[i,4]>0){
+    GMPT[i,5]<-"Permissive"#"promoter"
+  } else if (GMPT[i,4]<0){
+    GMPT[i,5]<-"Protective"#"Inhibitor"
+  } else {
+    GMPT[i,5]<-"Neutral"
+  }
+}
+
+row.names(GMPT)<-c(1:nrow(GMPT)) ###Final outputs
+
+### Top20 result
+GMPT_top20<-GMPT[c(1:20),] #Top20
+
+```
